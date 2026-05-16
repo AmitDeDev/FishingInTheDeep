@@ -20,11 +20,11 @@ const CONFIG = {
   startCoins: 100,
   rounds: 3,
   hookDescentSpeed: 120,
-  hookAscentSpeed: 80,
+  hookAscentSpeed: 140,
   hookFastSpeed: 300,
   gaugeSpeed: 0.85,
   surfaceY: 100,
-  metersToPixels: 40,
+  metersToPixels: 80,
   fishHitRadius: 28,
   hookHitRadius: 22,
   summaryFishDelay: 800,
@@ -239,7 +239,7 @@ function startFishing() {
 // ============================================================
 function spawnFish() {
   fish = [];
-  const count = Math.max(getMaxFish() * 2, 12);
+  const count = Math.max(getMaxFish() * 4, 20);
   const maxY = depthToWorldY(state.selectedDepth);
   const minY = CONFIG.surfaceY + 40;
 
@@ -337,8 +337,8 @@ function updateReady(dt) {
 
 function updateDescending(dt) {
   hook.y += hook.speed * dt;
-  const targetCamY = Math.max(0, hook.y - H * 0.55);
-  camera.y += (targetCamY - camera.y) * Math.min(1, 2.5 * dt);
+  const targetCamY = Math.max(0, hook.y - H * 0.35);
+  camera.y += (targetCamY - camera.y) * Math.min(1, 3.0 * dt);
 
   if (hook.y >= hook.targetDepth) {
     hook.y = hook.targetDepth;
@@ -732,24 +732,27 @@ function drawWater(camY) {
   const surfaceScreenY = CONFIG.surfaceY - camY;
   const depthProgress = Math.min(1, camY / (getMaxDepth() * CONFIG.metersToPixels));
 
-  // Water gradient — gets darker/bluer with depth
+  // Water gradient — stays bright at shallow, only darkens deep
+  const d = depthProgress;
+  const lerpC = (c1, c2, t) => {
+    const r = c1[0] + (c2[0] - c1[0]) * t;
+    const g = c1[1] + (c2[1] - c1[1]) * t;
+    const b = c1[2] + (c2[2] - c1[2]) * t;
+    return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  };
+  const bright = [4, 170, 220];
+  const mid = [2, 120, 180];
+  const deep = [5, 30, 60];
+  const abyss = [2, 10, 20];
+  const ease = d * d;
+  const topColor = lerpC(bright, mid, Math.min(1, ease * 0.8));
+  const midColor = lerpC(mid, deep, Math.min(1, ease * 1.0));
+  const botColor = lerpC(deep, abyss, Math.min(1, ease * 1.2));
+
   const grad = ctx.createLinearGradient(0, Math.max(0, surfaceScreenY), 0, H);
-  if (depthProgress < 0.3) {
-    grad.addColorStop(0, '#039BE5');
-    grad.addColorStop(0.3, '#0277BD');
-    grad.addColorStop(0.6, '#01579B');
-    grad.addColorStop(1, '#0A2E4A');
-  } else if (depthProgress < 0.6) {
-    grad.addColorStop(0, '#01579B');
-    grad.addColorStop(0.3, '#0A2E4A');
-    grad.addColorStop(0.7, '#061A2E');
-    grad.addColorStop(1, '#030D15');
-  } else {
-    grad.addColorStop(0, '#0A2540');
-    grad.addColorStop(0.3, '#061520');
-    grad.addColorStop(0.6, '#030D15');
-    grad.addColorStop(1, '#010508');
-  }
+  grad.addColorStop(0, topColor);
+  grad.addColorStop(0.4, midColor);
+  grad.addColorStop(1, botColor);
   ctx.fillStyle = grad;
   ctx.fillRect(0, Math.max(0, surfaceScreenY), W, H);
 
@@ -823,9 +826,9 @@ function drawWater(camY) {
   }
   ctx.restore();
 
-  // Depth fog overlay — darkens edges at deeper depths
-  if (depthProgress > 0.3) {
-    const fogAlpha = (depthProgress - 0.3) * 0.3;
+  // Depth fog overlay — only at genuinely deep depths
+  if (depthProgress > 0.55) {
+    const fogAlpha = (depthProgress - 0.55) * 0.35;
     ctx.fillStyle = `rgba(2, 8, 18, ${fogAlpha})`;
     ctx.fillRect(0, 0, W, H);
   }
