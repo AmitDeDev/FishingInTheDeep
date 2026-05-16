@@ -71,6 +71,47 @@ const FISH_VALUES = {
 };
 
 // ============================================================
+// AUDIO
+// ============================================================
+const audio = {
+  muted: false,
+  started: false,
+  bgm: null,
+  sfxCatch: null,
+  sfxCast: null,
+  init() {
+    if (this.started) return;
+    this.started = true;
+    try {
+      this.bgm = new Audio('assets/background_music.mp3');
+      this.bgm.loop = true;
+      this.bgm.volume = 0.25;
+      this.bgm.play().catch(() => {});
+      this.sfxCatch = new Audio('assets/catch.mp3');
+      this.sfxCatch.volume = 0.5;
+      this.sfxCast = new Audio('assets/rob_use.mp3');
+      this.sfxCast.volume = 0.45;
+    } catch (e) {}
+  },
+  playSfx(type) {
+    if (this.muted || !this.started) return;
+    try {
+      const src = type === 'catch' ? 'assets/catch.mp3' : 'assets/rob_use.mp3';
+      const vol = type === 'catch' ? 0.5 : 0.45;
+      const s = new Audio(src);
+      s.volume = vol;
+      s.play().catch(() => {});
+    } catch (e) {}
+  },
+  toggleMute() {
+    this.muted = !this.muted;
+    if (this.bgm) {
+      this.bgm.muted = this.muted;
+    }
+  }
+};
+
+// ============================================================
 // CANVAS SETUP
 // ============================================================
 const canvas = document.getElementById('game');
@@ -151,6 +192,7 @@ let pointerDown = false;
 canvas.addEventListener('pointerdown', (e) => {
   pointerX = e.clientX;
   pointerDown = true;
+  audio.init();
   handleClick(e.clientX, e.clientY);
 });
 
@@ -163,6 +205,11 @@ canvas.addEventListener('pointerup', () => {
 });
 
 function handleClick(x, y) {
+  // Mute button (top-right corner, small area)
+  if (x >= W - 45 && x <= W - 15 && y >= 55 && y <= 80) {
+    audio.toggleMute();
+    return;
+  }
   if (state.phase === 'READY') {
     if (checkUpgradeClick(x, y)) return;
     if (checkPlayClick(x, y)) return;
@@ -216,10 +263,12 @@ function buyUpgrade(type) {
     state.coins -= nextCost;
     if (type === 'maxFish') state.maxFishLevel++;
     else state.maxDepthLevel++;
+    audio.playSfx('cast');
   }
 }
 
 function startFishing() {
+  audio.playSfx('cast');
   gauge.running = false;
   const distFromCenter = Math.abs(gauge.position - 0.5) * 2;
   state.selectedDepth = getMaxDepth() - (distFromCenter * 2);
@@ -415,6 +464,7 @@ function checkFishCollisions() {
     if (dist < CONFIG.fishHitRadius + f.size) {
       f.caught = true;
       state.caughtFish.push(f);
+      audio.playSfx('catch');
       spawnFloatingText(f.x, f.y - camera.y, '+' + f.value, f.color);
       spawnCoinBurst(f.x, f.y - camera.y, 5);
 
@@ -446,10 +496,14 @@ function updateSummaryFish(dt) {
     summaryState.timer = 0;
     if (summaryState.index < state.caughtFish.length) {
       const f = state.caughtFish[summaryState.index];
-      const fx = W / 2 - 100 + (summaryState.index % 5) * 50;
-      const fy = H / 2 - 50 + Math.floor(summaryState.index / 5) * 60;
+      const py = H / 4 - 25;
+      const col = summaryState.index % 3;
+      const row = Math.floor(summaryState.index / 3);
+      const fx = W / 2 - 105 + col * 105;
+      const fy = py + 75 + row * 70;
       spawnCoinBurst(fx, fy, 4);
-      spawnFloatingText(fx + 30, fy, '+' + f.value, '#FFD700');
+      spawnFloatingText(fx, fy - 30, '+' + f.value, '#FFD700');
+      audio.playSfx('catch');
       summaryState.index++;
     } else {
       state.phase = 'SUMMARY_TOTAL';
@@ -529,6 +583,7 @@ function render() {
 
   renderParticles();
   renderFloatingTexts();
+  drawMuteButton();
 }
 
 function renderReady() {
@@ -587,28 +642,94 @@ function renderSummary() {
 }
 
 function renderEndScreen() {
+  // Deep ocean background
   const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, '#1a237e');
-  grad.addColorStop(1, '#0d47a1');
+  grad.addColorStop(0, '#050d1a');
+  grad.addColorStop(0.3, '#0a1e3d');
+  grad.addColorStop(0.7, '#0c2a52');
+  grad.addColorStop(1, '#071428');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
+  // Ambient light shafts
+  const et = Date.now() * 0.0003;
+  ctx.save();
+  for (let i = 0; i < 4; i++) {
+    ctx.globalAlpha = 0.025 + Math.sin(et + i * 1.5) * 0.01;
+    ctx.fillStyle = '#4FC3F7';
+    ctx.beginPath();
+    const rx = W * 0.15 + i * W * 0.22 + Math.sin(et * 2 + i) * 15;
+    ctx.moveTo(rx, 0);
+    ctx.lineTo(rx + 40, 0);
+    ctx.lineTo(rx + 90, H);
+    ctx.lineTo(rx - 30, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Main panel
+  const px = W / 2 - 190;
+  const py = H / 3 - 60;
+  const pw = 380;
+  const ph = 250;
+  ctx.fillStyle = 'rgba(6,18,40,0.85)';
+  roundRect(ctx, px, py, pw, ph, 16);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(79,195,247,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, px, py, pw, ph, 16);
+  ctx.stroke();
+  // Inner top highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.beginPath();
+  ctx.moveTo(px + 20, py + 1);
+  ctx.lineTo(px + pw - 20, py + 1);
+  ctx.stroke();
+
+  // Title
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,200,50,0.4)';
+  ctx.shadowBlur = 16;
   ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 48px Segoe UI, Arial';
+  ctx.font = 'bold 40px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Game Over!', W / 2, H / 3);
+  ctx.fillText('Game Over!', W / 2, py + 50);
+  ctx.restore();
 
+  // Gold divider
+  const dg = ctx.createLinearGradient(px + 50, 0, px + pw - 50, 0);
+  dg.addColorStop(0, 'transparent');
+  dg.addColorStop(0.3, 'rgba(255,200,50,0.3)');
+  dg.addColorStop(0.5, 'rgba(255,215,0,0.5)');
+  dg.addColorStop(0.7, 'rgba(255,200,50,0.3)');
+  dg.addColorStop(1, 'transparent');
+  ctx.strokeStyle = dg;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px + 50, py + 70);
+  ctx.lineTo(px + pw - 50, py + 70);
+  ctx.stroke();
+
+  // Final balance
   ctx.fillStyle = '#fff';
-  ctx.font = '28px Segoe UI, Arial';
-  ctx.fillText('Final Balance: ' + state.coins + ' coins', W / 2, H / 3 + 60);
+  ctx.font = 'bold 28px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.coins + ' coins', W / 2, py + 115);
+  ctx.fillStyle = 'rgba(180,200,220,0.6)';
+  ctx.font = '12px Georgia, serif';
+  ctx.fillText('FINAL BALANCE', W / 2, py + 135);
 
-  ctx.fillStyle = '#81D4FA';
-  ctx.font = '20px Segoe UI, Arial';
-  ctx.fillText('Fish Earnings: ' + state.totalEarnings + ' coins', W / 2, H / 3 + 100);
+  // Earnings
+  ctx.fillStyle = '#4FC3F7';
+  ctx.font = '18px Georgia, serif';
+  ctx.fillText('Fish Earnings: ' + state.totalEarnings + ' coins', W / 2, py + 175);
 
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.font = '18px Segoe UI, Arial';
-  ctx.fillText('Click anywhere to play again', W / 2, H / 3 + 160);
+  // Play again prompt (pulsing)
+  const pulse = 0.45 + Math.sin(Date.now() * 0.003) * 0.2;
+  ctx.fillStyle = `rgba(180,220,240,${pulse})`;
+  ctx.font = '15px Georgia, serif';
+  ctx.fillText('Click anywhere to play again', W / 2, py + 225);
 
   spawnEndScreenParticles();
 }
@@ -1387,60 +1508,101 @@ function drawCaughtFishOnHook() {
 }
 
 function drawCoinCounter() {
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  roundRect(ctx, 15, 15, 140, 40, 10);
+  // Panel
+  ctx.fillStyle = 'rgba(6,18,40,0.75)';
+  roundRect(ctx, 15, 15, 145, 42, 12);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(255,200,50,0.2)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, 15, 15, 145, 42, 12);
+  ctx.stroke();
 
-  ctx.fillStyle = '#FFD700';
+  // Coin icon (gradient disc)
+  const cg = ctx.createRadialGradient(38, 34, 2, 40, 36, 11);
+  cg.addColorStop(0, '#FFF59D');
+  cg.addColorStop(0.6, '#FFD700');
+  cg.addColorStop(1, '#E65100');
+  ctx.fillStyle = cg;
   ctx.beginPath();
-  ctx.arc(40, 35, 12, 0, Math.PI * 2);
+  ctx.arc(40, 36, 11, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#FFA000';
-  ctx.font = 'bold 12px Arial';
+  ctx.strokeStyle = '#BF360C';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // $ symbol
+  ctx.fillStyle = '#BF360C';
+  ctx.font = 'bold 11px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('$', 40, 39);
+  ctx.fillText('$', 40, 40);
+  // Shine
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(37, 32, 4, 2.5, -0.5, 0, Math.PI * 2);
+  ctx.fill();
 
+  // Amount
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px Segoe UI, Arial';
+  ctx.font = 'bold 20px Georgia, serif';
   ctx.textAlign = 'left';
-  ctx.fillText(state.coins.toString(), 60, 42);
+  ctx.fillText(state.coins.toString(), 58, 42);
 }
 
 function drawFishCounter() {
   const caught = state.caughtFish.length;
   const max = getMaxFish();
 
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  roundRect(ctx, 15, 15, 180, 45, 10);
+  // Panel
+  ctx.fillStyle = 'rgba(6,18,40,0.75)';
+  roundRect(ctx, 15, 15, 180, 50, 12);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(79,195,247,0.2)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, 15, 15, 180, 50, 12);
+  ctx.stroke();
 
-  // Fish icon
-  ctx.fillStyle = '#4FC3F7';
+  // Fish icon (mini fish shape)
+  const fig = ctx.createRadialGradient(33, 34, 1, 35, 35, 9);
+  fig.addColorStop(0, '#B3E5FC');
+  fig.addColorStop(1, '#0277BD');
+  ctx.fillStyle = fig;
   ctx.beginPath();
-  ctx.ellipse(35, 35, 10, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(35, 35, 9, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0277BD';
+  ctx.beginPath();
+  ctx.moveTo(27, 35);
+  ctx.lineTo(22, 31);
+  ctx.lineTo(22, 39);
+  ctx.closePath();
   ctx.fill();
 
+  // Count text
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 18px Segoe UI, Arial';
+  ctx.font = 'bold 18px Georgia, serif';
   ctx.textAlign = 'left';
-  ctx.fillText(caught + ' / ' + max, 52, 41);
+  ctx.fillText(caught + ' / ' + max, 52, 40);
 
-  // Fill bar
-  const barX = 15;
-  const barY = 50;
-  const barW = 170;
-  const barH = 6;
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  roundRect(ctx, barX, barY, barW, barH, 3);
+  // Progress bar (inset track)
+  const barX = 20;
+  const barY = 52;
+  const barW = 168;
+  const barH = 7;
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(ctx, barX, barY, barW, barH, 3.5);
   ctx.fill();
 
   const fillW = (caught / max) * barW;
   if (fillW > 0) {
-    const fillGrad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
-    fillGrad.addColorStop(0, '#4FC3F7');
-    fillGrad.addColorStop(1, '#00E676');
+    const fillGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    fillGrad.addColorStop(0, '#00BCD4');
+    fillGrad.addColorStop(0.7, '#26C6DA');
+    fillGrad.addColorStop(1, '#69F0AE');
     ctx.fillStyle = fillGrad;
-    roundRect(ctx, barX, barY, fillW, barH, 3);
+    roundRect(ctx, barX, barY, fillW, barH, 3.5);
+    ctx.fill();
+    // Top shine on bar
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    roundRect(ctx, barX, barY, fillW, 3, 2);
     ctx.fill();
   }
 }
@@ -1465,26 +1627,51 @@ function drawUpgradeBtn(x, y, w, h, label, type, level) {
   const nextCost = maxed ? 0 : levels[level + 1].cost;
   const affordable = !maxed && state.coins >= nextCost;
 
-  ctx.fillStyle = affordable ? 'rgba(76, 175, 80, 0.8)' : maxed ? 'rgba(100,100,100,0.6)' : 'rgba(180, 60, 60, 0.6)';
-  roundRect(ctx, x, y, w, h, 8);
+  // Button body gradient
+  const bg = ctx.createLinearGradient(x, y, x, y + h);
+  if (affordable) {
+    bg.addColorStop(0, 'rgba(46,170,80,0.85)');
+    bg.addColorStop(1, 'rgba(30,120,55,0.9)');
+  } else if (maxed) {
+    bg.addColorStop(0, 'rgba(70,85,100,0.7)');
+    bg.addColorStop(1, 'rgba(45,55,70,0.75)');
+  } else {
+    bg.addColorStop(0, 'rgba(150,50,50,0.7)');
+    bg.addColorStop(1, 'rgba(100,30,30,0.75)');
+  }
+  ctx.fillStyle = bg;
+  roundRect(ctx, x, y, w, h, 10);
   ctx.fill();
-  ctx.strokeStyle = affordable ? '#A5D6A7' : '#666';
-  ctx.lineWidth = 2;
-  roundRect(ctx, x, y, w, h, 8);
+
+  // Border
+  ctx.strokeStyle = affordable ? 'rgba(130,220,130,0.5)' : maxed ? 'rgba(130,140,150,0.3)' : 'rgba(200,90,90,0.4)';
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, x, y, w, h, 10);
   ctx.stroke();
 
+  // Top highlight edge
+  ctx.strokeStyle = affordable ? 'rgba(200,255,200,0.2)' : 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 14, y + 1.5);
+  ctx.lineTo(x + w - 14, y + 1.5);
+  ctx.stroke();
+
+  // Label
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 14px Segoe UI, Arial';
+  ctx.font = 'bold 14px Georgia, serif';
   ctx.textAlign = 'center';
   ctx.fillText(label, x + w / 2, y + 20);
 
-  ctx.font = '12px Segoe UI, Arial';
+  // Info text
+  ctx.font = '11px Georgia, serif';
+  ctx.fillStyle = affordable ? '#C8E6C9' : 'rgba(200,210,220,0.7)';
   if (maxed) {
     ctx.fillText('MAXED (' + levels[level].level + ')', x + w / 2, y + 38);
   } else {
     const current = levels[level].level;
     const next = levels[level + 1].level;
-    ctx.fillText(current + ' → ' + next + ' | ' + nextCost + ' coins', x + w / 2, y + 38);
+    ctx.fillText(current + ' → ' + next + '  ·  ' + nextCost + ' coins', x + w / 2, y + 38);
   }
 }
 
@@ -1494,134 +1681,270 @@ function drawGauge() {
   const gaugeW = 200;
   const gaugeH = 30;
 
-  // Background
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  roundRect(ctx, gaugeX, gaugeY - 5, gaugeW, gaugeH, 8);
+  // Outer frame
+  ctx.fillStyle = 'rgba(6,18,40,0.8)';
+  roundRect(ctx, gaugeX - 5, gaugeY - 9, gaugeW + 10, gaugeH + 6, 12);
   ctx.fill();
-
-  // Depth zones - min at edges, max at center
-  const zoneGrad = ctx.createLinearGradient(gaugeX, 0, gaugeX + gaugeW, 0);
-  zoneGrad.addColorStop(0, '#81D4FA');
-  zoneGrad.addColorStop(0.5, '#01579B');
-  zoneGrad.addColorStop(1, '#81D4FA');
-  ctx.fillStyle = zoneGrad;
-  roundRect(ctx, gaugeX + 4, gaugeY, gaugeW - 8, gaugeH - 10, 5);
-  ctx.fill();
-
-  // Center marker
-  ctx.strokeStyle = '#FFD700';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(W / 2, gaugeY - 2);
-  ctx.lineTo(W / 2, gaugeY + gaugeH - 8);
+  ctx.strokeStyle = 'rgba(79,195,247,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, gaugeX - 5, gaugeY - 9, gaugeW + 10, gaugeH + 6, 12);
   ctx.stroke();
 
-  // Pointer
-  const pointerX = gaugeX + 4 + gauge.position * (gaugeW - 8);
-  ctx.fillStyle = '#FF5722';
+  // Depth zone bar (inset look)
+  const zoneGrad = ctx.createLinearGradient(gaugeX, 0, gaugeX + gaugeW, 0);
+  zoneGrad.addColorStop(0, '#4DD0E1');
+  zoneGrad.addColorStop(0.25, '#0097A7');
+  zoneGrad.addColorStop(0.5, '#01579B');
+  zoneGrad.addColorStop(0.75, '#0097A7');
+  zoneGrad.addColorStop(1, '#4DD0E1');
+  ctx.fillStyle = zoneGrad;
+  roundRect(ctx, gaugeX + 3, gaugeY - 1, gaugeW - 6, gaugeH - 10, 5);
+  ctx.fill();
+  // Inner shadow at top of bar
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  roundRect(ctx, gaugeX + 3, gaugeY - 1, gaugeW - 6, 4, 3);
+  ctx.fill();
+
+  // Center max-depth marker (diamond)
+  ctx.fillStyle = '#FFD700';
   ctx.beginPath();
-  ctx.moveTo(pointerX, gaugeY - 5);
-  ctx.lineTo(pointerX - 6, gaugeY - 12);
-  ctx.lineTo(pointerX + 6, gaugeY - 12);
+  ctx.moveTo(W / 2, gaugeY - 4);
+  ctx.lineTo(W / 2 - 4, gaugeY + 3);
+  ctx.lineTo(W / 2, gaugeY + 10);
+  ctx.lineTo(W / 2 + 4, gaugeY + 3);
   ctx.closePath();
   ctx.fill();
+  ctx.strokeStyle = 'rgba(255,215,0,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W / 2, gaugeY);
+  ctx.lineTo(W / 2, gaugeY + gaugeH - 10);
+  ctx.stroke();
+
+  // Pointer (with subtle glow)
+  const pointerX = gaugeX + 4 + gauge.position * (gaugeW - 8);
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,70,20,0.5)';
+  ctx.shadowBlur = 8;
   ctx.fillStyle = '#FF5722';
+  ctx.beginPath();
+  ctx.moveTo(pointerX, gaugeY - 6);
+  ctx.lineTo(pointerX - 6, gaugeY - 13);
+  ctx.lineTo(pointerX + 6, gaugeY - 13);
+  ctx.closePath();
+  ctx.fill();
   ctx.beginPath();
   ctx.arc(pointerX, gaugeY + 10, 5, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+  // Pointer highlight dot
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.arc(pointerX - 1, gaugeY + 8, 2, 0, Math.PI * 2);
+  ctx.fill();
 
-  // Labels
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px Arial';
+  // PLAY label (pulsing)
+  const playAlpha = 0.75 + Math.sin(Date.now() * 0.004) * 0.2;
+  ctx.fillStyle = `rgba(255,255,255,${playAlpha})`;
+  ctx.font = 'bold 12px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('PLAY', W / 2, gaugeY + gaugeH + 12);
+  ctx.fillText('▶  PLAY', W / 2, gaugeY + gaugeH + 13);
 
-  // Depth info
-  ctx.font = '10px Arial';
-  ctx.fillStyle = '#B0BEC5';
-  ctx.fillText(getMinDepth() + 'm', gaugeX + 15, gaugeY + gaugeH + 12);
-  ctx.fillText(getMaxDepth() + 'm', W / 2, gaugeY - 16);
-  ctx.fillText(getMinDepth() + 'm', gaugeX + gaugeW - 15, gaugeY + gaugeH + 12);
+  // Depth labels
+  ctx.font = '10px Georgia, serif';
+  ctx.fillStyle = 'rgba(176,222,237,0.7)';
+  ctx.fillText(getMinDepth() + 'm', gaugeX + 12, gaugeY + gaugeH + 13);
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 10px Georgia, serif';
+  ctx.fillText(getMaxDepth() + 'm', W / 2, gaugeY - 18);
+  ctx.fillStyle = 'rgba(176,222,237,0.7)';
+  ctx.font = '10px Georgia, serif';
+  ctx.fillText(getMinDepth() + 'm', gaugeX + gaugeW - 12, gaugeY + gaugeH + 13);
 }
 
 function drawRoundIndicator() {
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  roundRect(ctx, W - 110, 15, 95, 30, 8);
+  const rx = W - 112;
+  const ry = 15;
+  ctx.fillStyle = 'rgba(6,18,40,0.75)';
+  roundRect(ctx, rx, ry, 97, 32, 10);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(79,195,247,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, rx, ry, 97, 32, 10);
+  ctx.stroke();
 
-  ctx.fillStyle = '#fff';
-  ctx.font = '14px Segoe UI, Arial';
+  ctx.fillStyle = 'rgba(176,210,230,0.6)';
+  ctx.font = '9px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Round ' + state.round + '/' + CONFIG.rounds, W - 62, 35);
+  ctx.fillText('ROUND', rx + 49, ry + 12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px Georgia, serif';
+  ctx.fillText(state.round + ' / ' + CONFIG.rounds, rx + 49, ry + 27);
 }
 
 function drawTutorial() {
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  roundRect(ctx, W / 2 - 170, H / 2 - 25, 340, 50, 12);
-  ctx.fill();
+  const tw = 350;
+  const th = 54;
+  const tx = W / 2 - tw / 2;
+  const ty = H / 2 - th / 2;
 
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px Segoe UI, Arial';
+  // Backdrop
+  ctx.fillStyle = 'rgba(6,18,40,0.88)';
+  roundRect(ctx, tx, ty, tw, th, 14);
+  ctx.fill();
+  // Pulsing border
+  const bp = 0.25 + Math.sin(Date.now() * 0.003) * 0.12;
+  ctx.strokeStyle = `rgba(79,195,247,${bp})`;
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, tx, ty, tw, th, 14);
+  ctx.stroke();
+
+  // Arrow hints
+  ctx.fillStyle = 'rgba(79,195,247,0.6)';
+  ctx.font = '16px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Move the hook to catch fish', W / 2, H / 2 + 5);
+  ctx.fillText('◄', tx + 22, ty + th / 2 + 5);
+  ctx.fillText('►', tx + tw - 22, ty + th / 2 + 5);
+
+  // Text
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 17px Georgia, serif';
+  ctx.fillText('Move the hook to catch fish', W / 2, ty + th / 2 + 6);
 }
 
 function drawSummaryFish() {
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  roundRect(ctx, W / 2 - 200, H / 4 - 20, 400, H / 2 + 40, 12);
-  ctx.fill();
+  const px = W / 2 - 205;
+  const py = H / 4 - 25;
+  const pw = 410;
+  const ph = H / 2 + 50;
 
+  // Panel
+  ctx.fillStyle = 'rgba(6,18,40,0.88)';
+  roundRect(ctx, px, py, pw, ph, 16);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(79,195,247,0.15)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, px, py, pw, ph, 16);
+  ctx.stroke();
+
+  // Title
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,200,50,0.35)';
+  ctx.shadowBlur = 10;
   ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 24px Segoe UI, Arial';
+  ctx.font = 'bold 22px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Your Catch!', W / 2, H / 4 + 20);
+  ctx.fillText('Your Catch!', W / 2, py + 30);
+  ctx.restore();
+
+  // Divider
+  const dg = ctx.createLinearGradient(px + 40, 0, px + pw - 40, 0);
+  dg.addColorStop(0, 'transparent');
+  dg.addColorStop(0.5, 'rgba(255,215,0,0.3)');
+  dg.addColorStop(1, 'transparent');
+  ctx.strokeStyle = dg;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px + 40, py + 44);
+  ctx.lineTo(px + pw - 40, py + 44);
+  ctx.stroke();
 
   for (let i = 0; i < Math.min(summaryState.index, state.caughtFish.length); i++) {
     const f = state.caughtFish[i];
     const row = Math.floor(i / 3);
     const col = i % 3;
-    const fx = W / 2 - 100 + col * 100;
-    const fy = H / 4 + 60 + row * 70;
+    const fx = W / 2 - 105 + col * 105;
+    const fy = py + 75 + row * 70;
 
     drawFish(fx, fy, f);
     ctx.fillStyle = '#FFD700';
-    ctx.font = '12px Arial';
+    ctx.font = 'bold 11px Georgia, serif';
     ctx.textAlign = 'center';
     ctx.fillText('+' + f.value, fx, fy + 25);
-    ctx.fillStyle = '#B0BEC5';
-    ctx.font = '10px Arial';
-    ctx.fillText(f.name, fx, fy + 38);
+    ctx.fillStyle = 'rgba(190,210,225,0.7)';
+    ctx.font = '10px Georgia, serif';
+    ctx.fillText(f.name, fx, fy + 37);
 
     if (f.type !== 'common') {
-      ctx.fillStyle = f.type === 'legendary' ? '#E1BEE7' : f.type === 'amazing' ? '#FFD54F' : '#CE93D8';
-      ctx.font = 'bold 10px Arial';
+      ctx.fillStyle = f.type === 'legendary' ? '#CE93D8' : f.type === 'amazing' ? '#FFD54F' : '#B39DDB';
+      ctx.font = 'bold 10px Georgia, serif';
       ctx.fillText(f.type.charAt(0).toUpperCase() + f.type.slice(1) + '!', fx, fy - 20);
     }
   }
 }
 
 function drawSummaryTotal() {
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  roundRect(ctx, W / 2 - 150, H / 2 - 50, 300, 100, 12);
-  ctx.fill();
+  const px = W / 2 - 155;
+  const py = H / 2 - 55;
+  const pw = 310;
+  const ph = 110;
 
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 28px Segoe UI, Arial';
+  // Panel
+  ctx.fillStyle = 'rgba(6,18,40,0.88)';
+  roundRect(ctx, px, py, pw, ph, 14);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,200,50,0.2)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, px, py, pw, ph, 14);
+  ctx.stroke();
+
+  // "TOTAL" sublabel
+  ctx.fillStyle = 'rgba(180,200,220,0.6)';
+  ctx.font = '11px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Total: ' + summaryState.countUp + ' coins', W / 2, H / 2);
+  ctx.fillText('TOTAL EARNED', W / 2, py + 25);
+
+  // Amount with glow
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,200,50,0.35)';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 30px Georgia, serif';
+  ctx.fillText(summaryState.countUp + ' coins', W / 2, py + 62);
+  ctx.restore();
+
+  // Divider under amount
+  const dg = ctx.createLinearGradient(px + 40, 0, px + pw - 40, 0);
+  dg.addColorStop(0, 'transparent');
+  dg.addColorStop(0.5, 'rgba(255,215,0,0.25)');
+  dg.addColorStop(1, 'transparent');
+  ctx.strokeStyle = dg;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px + 40, py + 76);
+  ctx.lineTo(px + pw - 40, py + 76);
+  ctx.stroke();
 
   if (summaryState.coinFlying) {
     const progress = summaryState.flyTimer / CONFIG.coinFlyDuration;
     const startX = W / 2;
-    const startY = H / 2;
+    const startY = py + 55;
     const endX = 80;
     const endY = 35;
     const cx = startX + (endX - startX) * progress;
     const cy = startY + (endY - startY) * progress;
+    const coinSize = 8 * (1 - progress * 0.4);
 
-    ctx.fillStyle = '#FFD700';
+    // Trail glow
+    ctx.save();
+    ctx.globalAlpha = 0.3 * (1 - progress);
+    const tg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coinSize * 3);
+    tg.addColorStop(0, '#FFD700');
+    tg.addColorStop(1, 'transparent');
+    ctx.fillStyle = tg;
     ctx.beginPath();
-    ctx.arc(cx, cy, 8 * (1 - progress * 0.5), 0, Math.PI * 2);
+    ctx.arc(cx, cy, coinSize * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Coin
+    const cg = ctx.createRadialGradient(cx - 1, cy - 1, 1, cx, cy, coinSize);
+    cg.addColorStop(0, '#FFF59D');
+    cg.addColorStop(0.6, '#FFD700');
+    cg.addColorStop(1, '#E65100');
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, coinSize, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -1646,6 +1969,47 @@ function renderFloatingTexts() {
     ctx.fillText(t.text, t.x, t.y);
   }
   ctx.globalAlpha = 1;
+}
+
+function drawMuteButton() {
+  const bx = W - 42;
+  const by = 57;
+  ctx.fillStyle = 'rgba(6,18,40,0.6)';
+  ctx.beginPath();
+  ctx.arc(bx + 12, by + 12, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(79,195,247,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Speaker icon
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillRect(bx + 6, by + 9, 5, 6);
+  ctx.beginPath();
+  ctx.moveTo(bx + 11, by + 7);
+  ctx.lineTo(bx + 16, by + 4);
+  ctx.lineTo(bx + 16, by + 20);
+  ctx.lineTo(bx + 11, by + 17);
+  ctx.closePath();
+  ctx.fill();
+  if (audio.muted) {
+    // X over speaker
+    ctx.strokeStyle = '#FF5252';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx + 4, by + 4);
+    ctx.lineTo(bx + 20, by + 20);
+    ctx.stroke();
+  } else {
+    // Sound waves
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(bx + 16, by + 12, 4, -0.6, 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(bx + 16, by + 12, 7, -0.5, 0.5);
+    ctx.stroke();
+  }
 }
 
 function roundRect(ctx, x, y, w, h, r) {
