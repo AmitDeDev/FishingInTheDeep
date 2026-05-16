@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fishing In The Deep</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #1a1a2e; font-family: 'Segoe UI', Arial, sans-serif; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const CONFIG = {
+  startCoins: 100,
+  rounds: 3,
+  hookDescentSpeed: 120,
+  hookAscentSpeed: 80,
+  hookFastSpeed: 300,
+  gaugeSpeed: 1.8,
+  surfaceY: 100,
+  metersToPixels: 40,
+  fishHitRadius: 28,
+  hookHitRadius: 22,
+  summaryFishDelay: 800,
+  summaryTotalDuration: 1500,
+  coinFlyDuration: 600,
+};
+
+const UPGRADES = {
+  maxFish: [
+    { level: 6, cost: 0 },
+    { level: 7, cost: 50 },
+    { level: 8, cost: 100 },
+    { level: 9, cost: 200 },
+    { level: 10, cost: 400 }
+  ],
+  maxDepth: [
+    { level: 5, cost: 0 },
+    { level: 10, cost: 50 },
+    { level: 15, cost: 75 },
+    { level: 20, cost: 150 },
+    { level: 30, cost: 300 }
+  ]
+};
+
+const FISH_NAMES = {
+  common: ['Bluefin', 'Sardine', 'Mackerel', 'Herring', 'Anchovy', 'Minnow'],
+  rare: ['Sunscale', 'Moonfish', 'Violet Fin', 'Coral Dancer', 'Ember Trout'],
+  amazing: ['Golden Koi', 'Storm Eel', 'Crystal Pike', 'Phoenix Bass'],
+  legendary: ['Abyssal Lord', 'Diamond Leviathan', 'Phantom Whale', 'Star Serpent']
+};
+
+const FISH_COLORS = {
+  common: { body: ['#4FC3F7', '#81C784', '#AED581', '#4DD0E1'], accent: ['#0288D1', '#388E3C', '#689F38', '#00838F'] },
+  rare: { body: ['#CE93D8', '#F48FB1', '#FF8A65'], accent: ['#7B1FA2', '#C2185B', '#D84315'] },
+  amazing: { body: ['#FFD54F', '#FFB74D', '#FFF176'], accent: ['#F57F17', '#E65100', '#F9A825'] },
+  legendary: { body: ['#E1BEE7', '#B2EBF2', '#F8BBD0'], accent: ['#4A148C', '#006064', '#880E4F'] }
+};
+
+const FISH_VALUES = {
+  common: [5, 10],
+  rare: [15, 25],
+  amazing: [30, 50],
+  legendary: [60, 100]
+};
+
+// ============================================================
+// CANVAS SETUP
+// ============================================================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+// STATE
+// ============================================================
+let state = {
+  phase: 'READY',
+  round: 1,
+  coins: CONFIG.startCoins,
+  maxFishLevel: 0,
+  maxDepthLevel: 0,
+  selectedDepth: 0,
+  caughtFish: [],
+  totalEarnings: 0,
+  pauseTimer: 0,
+  showTutorial: false,
+};
+
+let gauge = { position: 0, direction: 1, running: true };
+let hook = { x: 0, y: 0, speed: 0, targetDepth: 0 };
+let camera = { y: 0 };
+let fish = [];
+let particles = [];
+let floatingTexts = [];
+let summaryState = { index: 0, timer: 0, total: 0, countUp: 0, coinFlying: false, flyTimer: 0 };
+let pointerX = 0;
+let nearSurface = false;
+
+function getMaxFish() { return UPGRADES.maxFish[state.maxFishLevel].level; }
+function getMaxDepth() { return UPGRADES.maxDepth[state.maxDepthLevel].level; }
+function getMinDepth() { return Math.max(getMaxDepth() - 2, 3); }
+function depthToWorldY(depth) { return CONFIG.surfaceY + depth * CONFIG.metersToPixels; }
+
+// ============================================================
+// INPUT
+// ============================================================
+let pointerDown = false;
+
+canvas.addEventListener('pointerdown', (e) => {
+  pointerX = e.clientX;
+  pointerDown = true;
+  handleClick(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  pointerX = e.clientX;
+});
+
+canvas.addEventListener('pointerup', () => {
+  pointerDown = false;
+});
+
+function handleClick(x, y) {
+  if (state.phase === 'READY') {
+    if (checkUpgradeClick(x, y)) return;
+    if (checkPlayClick(x, y)) return;
+  }
+  if (state.phase === 'END_SCREEN') {
+    resetGame();
+  }
+}
+
+function checkUpgradeClick(x, y) {
+  const btnY = H - 130;
+  const btnW = 160;
+  const btnH = 50;
+  // Max Fish button
+  const btn1X = W / 2 - 180;
+  if (x >= btn1X && x <= btn1X + btnW && y >= btnY && y <= btnY + btnH) {
+    buyUpgrade('maxFish');
+    return true;
+  }
+  // Max Depth button
+  const btn2X = W / 2 + 20;
+  if (x >= btn2X && x <= btn2X + btnW && y >= btnY && y <= btnY + btnH) {
+    buyUpgrade('maxDepth');
+    return true;
+  }
+  return false;
+}
+
+function checkPlayClick(x, y) {
+  const playBtnY = H - 60;
+  const playBtnX = W / 2 - 100;
+  if (x >= playBtnX && x <= playBtnX + 200 && y >= playBtnY - 30 && y <= playBtnY + 30) {
+    startFishing();
+    return true;
+  }
+  // Also allow clicking on the gauge area
+  const gaugeY = H - 60;
+  if (y >= gaugeY - 40 && y <= gaugeY + 40) {
+    startFishing();
+    return true;
+  }
+  return false;
+}
+
+function buyUpgrade(type) {
+  const levels = UPGRADES[type];
+  const currentLevel = type === 'maxFish' ? state.maxFishLevel : state.maxDepthLevel;
+  if (currentLevel >= levels.length - 1) return;
+  const nextCost = levels[currentLevel + 1].cost;
+  if (state.coins >= nextCost) {
+    state.coins -= nextCost;
+    if (type === 'maxFish') state.maxFishLevel++;
+    else state.maxDepthLevel++;
+  }
+}
+
+function startFishing() {
+  gauge.running = false;
+  const distFromCenter = Math.abs(gauge.position - 0.5) * 2;
+  state.selectedDepth = getMaxDepth() - (distFromCenter * 2);
+  state.selectedDepth = Math.max(getMinDepth(), Math.min(getMaxDepth(), state.selectedDepth));
+  state.caughtFish = [];
+  nearSurface = false;
+  hook.x = W / 2;
+  hook.y = CONFIG.surfaceY;
+  hook.targetDepth = depthToWorldY(state.selectedDepth);
+  hook.speed = CONFIG.hookDescentSpeed;
+  spawnFish();
+  state.phase = 'DESCENDING';
+}
+
+// ============================================================
+// FISH SPAWNING
+// ============================================================
+function spawnFish() {
+  fish = [];
+  const count = Math.max(getMaxFish() * 2, 12);
+  const maxY = depthToWorldY(state.selectedDepth);
+  const minY = CONFIG.surfaceY + 40;
+
+  for (let i = 0; i < count; i++) {
+    const depth = minY + (maxY - minY) * (i / count) + Math.random() * 30;
+    const depthMeters = (depth - CONFIG.surfaceY) / CONFIG.metersToPixels;
+    const rarity = pickRarity(depthMeters);
+    const colors = FISH_COLORS[rarity];
+    const bodyColor = colors.body[Math.floor(Math.random() * colors.body.length)];
+    const accentColor = colors.accent[Math.floor(Math.random() * colors.accent.length)];
+    const names = FISH_NAMES[rarity];
+    const [minVal, maxVal] = FISH_VALUES[rarity];
+
+    fish.push({
+      x: 60 + Math.random() * (W - 120),
+      y: depth,
+      type: rarity,
+      name: names[Math.floor(Math.random() * names.length)],
+      value: minVal + Math.floor(Math.random() * (maxVal - minVal + 1)),
+      size: rarity === 'legendary' ? 22 : rarity === 'amazing' ? 18 : rarity === 'rare' ? 16 : 14,
+      color: bodyColor,
+      accentColor: accentColor,
+      swimSpeed: 30 + Math.random() * 50,
+      direction: Math.random() > 0.5 ? 1 : -1,
+      caught: false,
+      bobOffset: Math.random() * Math.PI * 2
+    });
+  }
+}
+
+function pickRarity(depthMeters) {
+  let roll = Math.random() * 100;
+  let table;
+  if (depthMeters <= 5) table = [80, 15, 4, 1];
+  else if (depthMeters <= 15) table = [60, 25, 10, 5];
+  else table = [40, 28, 19, 13];
+
+  if (roll < table[3]) return 'legendary';
+  if (roll < table[3] + table[2]) return 'amazing';
+  if (roll < table[3] + table[2] + table[1]) return 'rare';
+  return 'common';
+}
+
+// ============================================================
+// PARTICLES & EFFECTS
+// ============================================================
+function spawnCoinBurst(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 60 + Math.random() * 100;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 50,
+      life: 1,
+      decay: 1.5 + Math.random() * 0.5,
+      color: Math.random() > 0.5 ? '#FFD700' : '#FFA000',
+      size: 3 + Math.random() * 3
+    });
+  }
+}
+
+function spawnFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -60 });
+}
+
+// ============================================================
+// UPDATE
+// ============================================================
+let lastTime = 0;
+
+function update(dt) {
+  updateParticles(dt);
+  updateFloatingTexts(dt);
+
+  switch (state.phase) {
+    case 'READY': updateReady(dt); break;
+    case 'DESCENDING': updateDescending(dt); break;
+    case 'PAUSE_AT_DEPTH': updatePause(dt); break;
+    case 'ASCENDING_CATCH': updateAscending(dt); break;
+    case 'FAST_RETURN': updateFastReturn(dt); break;
+    case 'SUMMARY_FISH': updateSummaryFish(dt); break;
+    case 'SUMMARY_TOTAL': updateSummaryTotal(dt); break;
+    case 'END_SCREEN': break;
+  }
+}
+
+function updateReady(dt) {
+  if (gauge.running) {
+    gauge.position += gauge.direction * CONFIG.gaugeSpeed * dt;
+    if (gauge.position >= 1) { gauge.position = 1; gauge.direction = -1; }
+    if (gauge.position <= 0) { gauge.position = 0; gauge.direction = 1; }
+  }
+}
+
+function updateDescending(dt) {
+  hook.y += hook.speed * dt;
+  camera.y = Math.max(0, hook.y - H * 0.4);
+
+  if (hook.y >= hook.targetDepth) {
+    hook.y = hook.targetDepth;
+    state.phase = 'PAUSE_AT_DEPTH';
+    state.pauseTimer = state.round === 1 ? 2.0 : 0.5 + Math.random() * 0.5;
+    state.showTutorial = state.round === 1;
+  }
+
+  updateFishSwim(dt);
+}
+
+function updatePause(dt) {
+  state.pauseTimer -= dt;
+  if (state.pauseTimer <= 0) {
+    state.showTutorial = false;
+    state.phase = 'ASCENDING_CATCH';
+    hook.speed = CONFIG.hookAscentSpeed;
+  }
+}
+
+function updateAscending(dt) {
+  hook.y -= hook.speed * dt;
+  hook.x += (pointerX - hook.x) * 0.1;
+  hook.x = Math.max(30, Math.min(W - 30, hook.x));
+  camera.y = Math.max(0, hook.y - H * 0.4);
+
+  checkFishCollisions();
+  updateFishSwim(dt);
+
+  if (hook.y <= CONFIG.surfaceY + 20 && !nearSurface) {
+    nearSurface = true;
+  }
+
+  if (hook.y <= CONFIG.surfaceY) {
+    hook.y = CONFIG.surfaceY;
+    startSummary();
+  }
+}
+
+function updateFastReturn(dt) {
+  hook.y -= CONFIG.hookFastSpeed * dt;
+  hook.x += (pointerX - hook.x) * 0.05;
+  camera.y = Math.max(0, hook.y - H * 0.4);
+
+  updateFishSwim(dt);
+
+  if (hook.y <= CONFIG.surfaceY + 30 && !nearSurface) {
+    nearSurface = true;
+  }
+
+  if (hook.y <= CONFIG.surfaceY) {
+    hook.y = CONFIG.surfaceY;
+    startSummary();
+  }
+}
+
+function updateFishSwim(dt) {
+  for (let f of fish) {
+    if (f.caught) continue;
+    f.x += f.swimSpeed * f.direction * dt;
+    if (f.x < 40) { f.x = 40; f.direction = 1; }
+    if (f.x > W - 40) { f.x = W - 40; f.direction = -1; }
+  }
+}
+
+function checkFishCollisions() {
+  if (state.caughtFish.length >= getMaxFish()) return;
+
+  for (let f of fish) {
+    if (f.caught) continue;
+    const dx = hook.x - f.x;
+    const dy = hook.y - f.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < CONFIG.fishHitRadius + f.size) {
+      f.caught = true;
+      state.caughtFish.push(f);
+      spawnFloatingText(f.x, f.y - camera.y, '+' + f.value, f.color);
+      spawnCoinBurst(f.x, f.y - camera.y, 5);
+
+      if (f.type !== 'common') {
+        const title = f.type === 'rare' ? 'Rare!' : f.type === 'amazing' ? 'Amazing!' : 'Legendary!';
+        spawnFloatingText(f.x, f.y - camera.y - 30, title, f.type === 'legendary' ? '#E1BEE7' : f.type === 'amazing' ? '#FFD54F' : '#CE93D8');
+      }
+
+      if (state.caughtFish.length >= getMaxFish()) {
+        state.phase = 'FAST_RETURN';
+        return;
+      }
+    }
+  }
+}
+
+function startSummary() {
+  state.phase = 'SUMMARY_FISH';
+  summaryState = { index: 0, timer: 0, total: 0, countUp: 0, coinFlying: false, flyTimer: 0 };
+  camera.y = 0;
+  for (let f of state.caughtFish) {
+    summaryState.total += f.value;
+  }
+}
+
+function updateSummaryFish(dt) {
+  summaryState.timer += dt * 1000;
+  if (summaryState.timer >= CONFIG.summaryFishDelay) {
+    summaryState.timer = 0;
+    if (summaryState.index < state.caughtFish.length) {
+      const f = state.caughtFish[summaryState.index];
+      const fx = W / 2 - 100 + (summaryState.index % 5) * 50;
+      const fy = H / 2 - 50 + Math.floor(summaryState.index / 5) * 60;
+      spawnCoinBurst(fx, fy, 4);
+      spawnFloatingText(fx + 30, fy, '+' + f.value, '#FFD700');
+      summaryState.index++;
+    } else {
+      state.phase = 'SUMMARY_TOTAL';
+      summaryState.timer = 0;
+    }
+  }
+}
+
+function updateSummaryTotal(dt) {
+  summaryState.timer += dt * 1000;
+  const progress = Math.min(1, summaryState.timer / CONFIG.summaryTotalDuration);
+  summaryState.countUp = Math.floor(summaryState.total * progress);
+
+  if (progress >= 1 && !summaryState.coinFlying) {
+    summaryState.coinFlying = true;
+    summaryState.flyTimer = 0;
+  }
+
+  if (summaryState.coinFlying) {
+    summaryState.flyTimer += dt * 1000;
+    if (summaryState.flyTimer >= CONFIG.coinFlyDuration) {
+      state.coins += summaryState.total;
+      state.totalEarnings += summaryState.total;
+
+      if (state.round >= CONFIG.rounds) {
+        state.phase = 'END_SCREEN';
+      } else {
+        state.round++;
+        state.phase = 'READY';
+        gauge.running = true;
+        gauge.position = 0;
+        gauge.direction = 1;
+        nearSurface = false;
+      }
+    }
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 200 * dt;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function updateFloatingTexts(dt) {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const t = floatingTexts[i];
+    t.y += t.vy * dt;
+    t.life -= 1.2 * dt;
+    if (t.life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  switch (state.phase) {
+    case 'READY': renderReady(); break;
+    case 'DESCENDING':
+    case 'PAUSE_AT_DEPTH':
+    case 'ASCENDING_CATCH':
+    case 'FAST_RETURN':
+      renderFishing(); break;
+    case 'SUMMARY_FISH':
+    case 'SUMMARY_TOTAL':
+      renderSummary(); break;
+    case 'END_SCREEN': renderEndScreen(); break;
+  }
+
+  renderParticles();
+  renderFloatingTexts();
+}
+
+function renderReady() {
+  drawSky();
+  drawWaterSurface(0);
+  drawFisherman();
+  drawCoinCounter();
+  drawUpgradeButtons();
+  drawGauge();
+  drawRoundIndicator();
+}
+
+function renderFishing() {
+  drawSky();
+  drawWater(camera.y);
+  drawFishInWater();
+  drawHookAndLine();
+  drawCaughtFishOnHook();
+
+  if (nearSurface || state.phase === 'DESCENDING' || state.phase === 'PAUSE_AT_DEPTH' ||
+      state.phase === 'ASCENDING_CATCH' || state.phase === 'FAST_RETURN') {
+    if (nearSurface) {
+      drawCoinCounter();
+    } else {
+      drawFishCounter();
+    }
+  }
+
+  if (state.showTutorial) {
+    drawTutorial();
+  }
+
+  drawRoundIndicator();
+}
+
+function renderSummary() {
+  drawSky();
+  drawWaterSurface(0);
+  drawCoinCounter();
+  drawRoundIndicator();
+
+  if (state.phase === 'SUMMARY_FISH') {
+    drawSummaryFish();
+  } else {
+    drawSummaryTotal();
+  }
+}
+
+function renderEndScreen() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1a237e');
+  grad.addColorStop(1, '#0d47a1');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 48px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Game Over!', W / 2, H / 3);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '28px Segoe UI, Arial';
+  ctx.fillText('Final Balance: ' + state.coins + ' coins', W / 2, H / 3 + 60);
+
+  ctx.fillStyle = '#81D4FA';
+  ctx.font = '20px Segoe UI, Arial';
+  ctx.fillText('Fish Earnings: ' + state.totalEarnings + ' coins', W / 2, H / 3 + 100);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '18px Segoe UI, Arial';
+  ctx.fillText('Click anywhere to play again', W / 2, H / 3 + 160);
+
+  spawnEndScreenParticles();
+}
+
+let endParticleTimer = 0;
+function spawnEndScreenParticles() {
+  endParticleTimer++;
+  if (endParticleTimer % 20 === 0) {
+    spawnCoinBurst(Math.random() * W, Math.random() * H * 0.5, 2);
+  }
+}
+
+// ============================================================
+// DRAW HELPERS
+// ============================================================
+function drawSky() {
+  const grad = ctx.createLinearGradient(0, 0, 0, CONFIG.surfaceY - camera.y);
+  grad.addColorStop(0, '#87CEEB');
+  grad.addColorStop(1, '#E0F7FA');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, Math.max(0, CONFIG.surfaceY - camera.y));
+}
+
+function drawWaterSurface(camY) {
+  const surfaceScreenY = CONFIG.surfaceY - camY;
+  const grad = ctx.createLinearGradient(0, surfaceScreenY, 0, H);
+  grad.addColorStop(0, '#0288D1');
+  grad.addColorStop(0.3, '#01579B');
+  grad.addColorStop(1, '#0D1B2A');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, surfaceScreenY, W, H - surfaceScreenY);
+
+  // Surface wave line
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = 0; x < W; x += 5) {
+    const waveY = surfaceScreenY + Math.sin(x * 0.02 + Date.now() * 0.002) * 3;
+    x === 0 ? ctx.moveTo(x, waveY) : ctx.lineTo(x, waveY);
+  }
+  ctx.stroke();
+}
+
+function drawWater(camY) {
+  const surfaceScreenY = CONFIG.surfaceY - camY;
+  const totalDepth = getMaxDepth() * CONFIG.metersToPixels + 200;
+
+  const grad = ctx.createLinearGradient(0, Math.max(0, surfaceScreenY), 0, H);
+  grad.addColorStop(0, '#0288D1');
+  grad.addColorStop(0.2, '#01579B');
+  grad.addColorStop(0.5, '#0A2540');
+  grad.addColorStop(1, '#050E1A');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, Math.max(0, surfaceScreenY), W, H);
+
+  // Sky above water
+  if (surfaceScreenY > 0) {
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, surfaceScreenY);
+    skyGrad.addColorStop(0, '#87CEEB');
+    skyGrad.addColorStop(1, '#E0F7FA');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, surfaceScreenY);
+  }
+
+  // Surface wave
+  if (surfaceScreenY > -10 && surfaceScreenY < H) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x < W; x += 5) {
+      const waveY = surfaceScreenY + Math.sin(x * 0.02 + Date.now() * 0.002) * 3;
+      x === 0 ? ctx.moveTo(x, waveY) : ctx.lineTo(x, waveY);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawFisherman() {
+  const fx = W / 2;
+  const fy = CONFIG.surfaceY - 30;
+
+  // Dock
+  ctx.fillStyle = '#5D4037';
+  ctx.fillRect(fx - 50, fy + 10, 100, 20);
+  ctx.fillStyle = '#4E342E';
+  ctx.fillRect(fx - 45, fy + 30, 10, 30);
+  ctx.fillRect(fx + 35, fy + 30, 10, 30);
+
+  // Body
+  ctx.fillStyle = '#FF7043';
+  ctx.beginPath();
+  ctx.ellipse(fx, fy - 15, 18, 25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#BF360C';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle = '#FFCC80';
+  ctx.beginPath();
+  ctx.arc(fx, fy - 45, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#E65100';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Hat
+  ctx.fillStyle = '#1565C0';
+  ctx.beginPath();
+  ctx.ellipse(fx, fy - 56, 16, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(fx - 10, fy - 68, 20, 14);
+
+  // Rod
+  ctx.strokeStyle = '#795548';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(fx + 10, fy - 20);
+  ctx.lineTo(fx + 60, fy - 70);
+  ctx.stroke();
+}
+
+function drawFishInWater() {
+  for (let f of fish) {
+    if (f.caught) continue;
+    const screenY = f.y - camera.y;
+    if (screenY < -50 || screenY > H + 50) continue;
+    drawFish(f.x, screenY, f);
+  }
+}
+
+function drawFish(x, y, f) {
+  const bob = Math.sin(Date.now() * 0.003 + f.bobOffset) * 3;
+  const sy = y + bob;
+
+  ctx.save();
+  ctx.translate(x, sy);
+  if (f.direction < 0) ctx.scale(-1, 1);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.ellipse(2, 3, f.size, f.size * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  const grad = ctx.createRadialGradient(-3, -2, 2, 0, 0, f.size);
+  grad.addColorStop(0, f.color);
+  grad.addColorStop(1, f.accentColor);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, f.size, f.size * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = f.accentColor;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Tail
+  ctx.fillStyle = f.accentColor;
+  ctx.beginPath();
+  ctx.moveTo(-f.size + 2, 0);
+  ctx.lineTo(-f.size - 8, -6);
+  ctx.lineTo(-f.size - 8, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(f.size * 0.4, -2, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(f.size * 0.45, -2, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHookAndLine() {
+  const hookScreenY = hook.y - camera.y;
+
+  // Line
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(hook.x, 0);
+  ctx.lineTo(hook.x, hookScreenY);
+  ctx.stroke();
+
+  // Hook
+  ctx.strokeStyle = '#B0BEC5';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(hook.x, hookScreenY + 8, 8, 0, Math.PI, false);
+  ctx.stroke();
+
+  // Hook point
+  ctx.fillStyle = '#CFD8DC';
+  ctx.beginPath();
+  ctx.arc(hook.x - 8, hookScreenY + 8, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCaughtFishOnHook() {
+  const hookScreenY = hook.y - camera.y;
+  for (let i = 0; i < state.caughtFish.length; i++) {
+    const f = state.caughtFish[i];
+    const offY = hookScreenY + 20 + i * 18;
+    const offX = hook.x + Math.sin(i * 1.2) * 8;
+    drawFish(offX, offY, f);
+  }
+}
+
+function drawCoinCounter() {
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(ctx, 15, 15, 140, 40, 10);
+  ctx.fill();
+
+  ctx.fillStyle = '#FFD700';
+  ctx.beginPath();
+  ctx.arc(40, 35, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#FFA000';
+  ctx.font = 'bold 12px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('$', 40, 39);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px Segoe UI, Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(state.coins.toString(), 60, 42);
+}
+
+function drawFishCounter() {
+  const caught = state.caughtFish.length;
+  const max = getMaxFish();
+
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  roundRect(ctx, 15, 15, 180, 45, 10);
+  ctx.fill();
+
+  // Fish icon
+  ctx.fillStyle = '#4FC3F7';
+  ctx.beginPath();
+  ctx.ellipse(35, 35, 10, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px Segoe UI, Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(caught + ' / ' + max, 52, 41);
+
+  // Fill bar
+  const barX = 15;
+  const barY = 50;
+  const barW = 170;
+  const barH = 6;
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  roundRect(ctx, barX, barY, barW, barH, 3);
+  ctx.fill();
+
+  const fillW = (caught / max) * barW;
+  if (fillW > 0) {
+    const fillGrad = ctx.createLinearGradient(barX, 0, barX + fillW, 0);
+    fillGrad.addColorStop(0, '#4FC3F7');
+    fillGrad.addColorStop(1, '#00E676');
+    ctx.fillStyle = fillGrad;
+    roundRect(ctx, barX, barY, fillW, barH, 3);
+    ctx.fill();
+  }
+}
+
+function drawUpgradeButtons() {
+  const btnY = H - 130;
+  const btnW = 160;
+  const btnH = 50;
+
+  // Max Fish
+  const btn1X = W / 2 - 180;
+  drawUpgradeBtn(btn1X, btnY, btnW, btnH, 'Max Fish', 'maxFish', state.maxFishLevel);
+
+  // Max Depth
+  const btn2X = W / 2 + 20;
+  drawUpgradeBtn(btn2X, btnY, btnW, btnH, 'Max Depth', 'maxDepth', state.maxDepthLevel);
+}
+
+function drawUpgradeBtn(x, y, w, h, label, type, level) {
+  const levels = UPGRADES[type];
+  const maxed = level >= levels.length - 1;
+  const nextCost = maxed ? 0 : levels[level + 1].cost;
+  const affordable = !maxed && state.coins >= nextCost;
+
+  ctx.fillStyle = affordable ? 'rgba(76, 175, 80, 0.8)' : maxed ? 'rgba(100,100,100,0.6)' : 'rgba(180, 60, 60, 0.6)';
+  roundRect(ctx, x, y, w, h, 8);
+  ctx.fill();
+  ctx.strokeStyle = affordable ? '#A5D6A7' : '#666';
+  ctx.lineWidth = 2;
+  roundRect(ctx, x, y, w, h, 8);
+  ctx.stroke();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + w / 2, y + 20);
+
+  ctx.font = '12px Segoe UI, Arial';
+  if (maxed) {
+    ctx.fillText('MAXED (' + levels[level].level + ')', x + w / 2, y + 38);
+  } else {
+    const current = levels[level].level;
+    const next = levels[level + 1].level;
+    ctx.fillText(current + ' → ' + next + ' | ' + nextCost + ' coins', x + w / 2, y + 38);
+  }
+}
+
+function drawGauge() {
+  const gaugeX = W / 2 - 100;
+  const gaugeY = H - 55;
+  const gaugeW = 200;
+  const gaugeH = 30;
+
+  // Background
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  roundRect(ctx, gaugeX, gaugeY - 5, gaugeW, gaugeH, 8);
+  ctx.fill();
+
+  // Depth zones - min at edges, max at center
+  const zoneGrad = ctx.createLinearGradient(gaugeX, 0, gaugeX + gaugeW, 0);
+  zoneGrad.addColorStop(0, '#81D4FA');
+  zoneGrad.addColorStop(0.5, '#01579B');
+  zoneGrad.addColorStop(1, '#81D4FA');
+  ctx.fillStyle = zoneGrad;
+  roundRect(ctx, gaugeX + 4, gaugeY, gaugeW - 8, gaugeH - 10, 5);
+  ctx.fill();
+
+  // Center marker
+  ctx.strokeStyle = '#FFD700';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(W / 2, gaugeY - 2);
+  ctx.lineTo(W / 2, gaugeY + gaugeH - 8);
+  ctx.stroke();
+
+  // Pointer
+  const pointerX = gaugeX + 4 + gauge.position * (gaugeW - 8);
+  ctx.fillStyle = '#FF5722';
+  ctx.beginPath();
+  ctx.moveTo(pointerX, gaugeY - 5);
+  ctx.lineTo(pointerX - 6, gaugeY - 12);
+  ctx.lineTo(pointerX + 6, gaugeY - 12);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#FF5722';
+  ctx.beginPath();
+  ctx.arc(pointerX, gaugeY + 10, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Labels
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('PLAY', W / 2, gaugeY + gaugeH + 12);
+
+  // Depth info
+  ctx.font = '10px Arial';
+  ctx.fillStyle = '#B0BEC5';
+  ctx.fillText(getMinDepth() + 'm', gaugeX + 15, gaugeY + gaugeH + 12);
+  ctx.fillText(getMaxDepth() + 'm', W / 2, gaugeY - 16);
+  ctx.fillText(getMinDepth() + 'm', gaugeX + gaugeW - 15, gaugeY + gaugeH + 12);
+}
+
+function drawRoundIndicator() {
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  roundRect(ctx, W - 110, 15, 95, 30, 8);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Round ' + state.round + '/' + CONFIG.rounds, W - 62, 35);
+}
+
+function drawTutorial() {
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  roundRect(ctx, W / 2 - 170, H / 2 - 25, 340, 50, 12);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Move the hook to catch fish', W / 2, H / 2 + 5);
+}
+
+function drawSummaryFish() {
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  roundRect(ctx, W / 2 - 200, H / 4 - 20, 400, H / 2 + 40, 12);
+  ctx.fill();
+
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 24px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Your Catch!', W / 2, H / 4 + 20);
+
+  for (let i = 0; i < Math.min(summaryState.index, state.caughtFish.length); i++) {
+    const f = state.caughtFish[i];
+    const row = Math.floor(i / 3);
+    const col = i % 3;
+    const fx = W / 2 - 100 + col * 100;
+    const fy = H / 4 + 60 + row * 70;
+
+    drawFish(fx, fy, f);
+    ctx.fillStyle = '#FFD700';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('+' + f.value, fx, fy + 25);
+    ctx.fillStyle = '#B0BEC5';
+    ctx.font = '10px Arial';
+    ctx.fillText(f.name, fx, fy + 38);
+
+    if (f.type !== 'common') {
+      ctx.fillStyle = f.type === 'legendary' ? '#E1BEE7' : f.type === 'amazing' ? '#FFD54F' : '#CE93D8';
+      ctx.font = 'bold 10px Arial';
+      ctx.fillText(f.type.charAt(0).toUpperCase() + f.type.slice(1) + '!', fx, fy - 20);
+    }
+  }
+}
+
+function drawSummaryTotal() {
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  roundRect(ctx, W / 2 - 150, H / 2 - 50, 300, 100, 12);
+  ctx.fill();
+
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 28px Segoe UI, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Total: ' + summaryState.countUp + ' coins', W / 2, H / 2);
+
+  if (summaryState.coinFlying) {
+    const progress = summaryState.flyTimer / CONFIG.coinFlyDuration;
+    const startX = W / 2;
+    const startY = H / 2;
+    const endX = 80;
+    const endY = 35;
+    const cx = startX + (endX - startX) * progress;
+    const cy = startY + (endY - startY) * progress;
+
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8 * (1 - progress * 0.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function renderParticles() {
+  for (let p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function renderFloatingTexts() {
+  for (let t of floatingTexts) {
+    ctx.globalAlpha = t.life;
+    ctx.fillStyle = t.color;
+    ctx.font = 'bold 16px Segoe UI, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x, t.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ============================================================
+// GAME RESET
+// ============================================================
+function resetGame() {
+  state = {
+    phase: 'READY',
+    round: 1,
+    coins: CONFIG.startCoins,
+    maxFishLevel: 0,
+    maxDepthLevel: 0,
+    selectedDepth: 0,
+    caughtFish: [],
+    totalEarnings: 0,
+    pauseTimer: 0,
+    showTutorial: false,
+  };
+  gauge = { position: 0, direction: 1, running: true };
+  hook = { x: 0, y: 0, speed: 0, targetDepth: 0 };
+  camera = { y: 0 };
+  fish = [];
+  particles = [];
+  floatingTexts = [];
+  nearSurface = false;
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+
+  update(dt);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+lastTime = performance.now();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
