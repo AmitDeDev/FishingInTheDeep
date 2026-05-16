@@ -22,7 +22,7 @@ const CONFIG = {
   hookDescentSpeed: 120,
   hookAscentSpeed: 80,
   hookFastSpeed: 300,
-  gaugeSpeed: 1.8,
+  gaugeSpeed: 0.85,
   surfaceY: 100,
   metersToPixels: 40,
   fishHitRadius: 28,
@@ -80,6 +80,7 @@ let W, H;
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
+  CONFIG.surfaceY = Math.round(H * 0.28);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -336,7 +337,8 @@ function updateReady(dt) {
 
 function updateDescending(dt) {
   hook.y += hook.speed * dt;
-  camera.y = Math.max(0, hook.y - H * 0.4);
+  const targetCamY = Math.max(0, hook.y - H * 0.55);
+  camera.y += (targetCamY - camera.y) * Math.min(1, 2.5 * dt);
 
   if (hook.y >= hook.targetDepth) {
     hook.y = hook.targetDepth;
@@ -542,6 +544,15 @@ function renderReady() {
 function renderFishing() {
   drawSky();
   drawWater(camera.y);
+
+  const surfaceScreenY = CONFIG.surfaceY - camera.y;
+  if (surfaceScreenY > -80) {
+    ctx.save();
+    ctx.translate(0, -camera.y);
+    drawFisherman();
+    ctx.restore();
+  }
+
   drawFishInWater();
   drawHookAndLine();
   drawCaughtFishOnHook();
@@ -846,45 +857,267 @@ function drawFisherman() {
   const fx = W / 2;
   const fy = CONFIG.surfaceY - 30;
 
-  // Dock
-  ctx.fillStyle = '#5D4037';
-  ctx.fillRect(fx - 50, fy + 10, 100, 20);
-  ctx.fillStyle = '#4E342E';
-  ctx.fillRect(fx - 45, fy + 30, 10, 30);
-  ctx.fillRect(fx + 35, fy + 30, 10, 30);
-
-  // Body
-  ctx.fillStyle = '#FF7043';
+  // Dock shadow on water
+  ctx.fillStyle = 'rgba(0,0,0,0.13)';
   ctx.beginPath();
-  ctx.ellipse(fx, fy - 15, 18, 25, 0, 0, Math.PI * 2);
+  ctx.ellipse(fx, fy + 32, 58, 7, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#BF360C';
-  ctx.lineWidth = 2;
-  ctx.stroke();
 
-  // Head
-  ctx.fillStyle = '#FFCC80';
-  ctx.beginPath();
-  ctx.arc(fx, fy - 45, 14, 0, Math.PI * 2);
+  // Dock legs
+  const legG = ctx.createLinearGradient(0, fy + 20, 0, fy + 58);
+  legG.addColorStop(0, '#6D4C41');
+  legG.addColorStop(1, '#3E2723');
+  ctx.fillStyle = legG;
+  ctx.fillRect(fx - 43, fy + 22, 9, 36);
+  ctx.fillRect(fx + 34, fy + 22, 9, 36);
+
+  // Dock platform
+  const dockG = ctx.createLinearGradient(0, fy + 6, 0, fy + 26);
+  dockG.addColorStop(0, '#8D6E63');
+  dockG.addColorStop(0.35, '#795548');
+  dockG.addColorStop(0.7, '#6D4C41');
+  dockG.addColorStop(1, '#5D4037');
+  ctx.fillStyle = dockG;
+  roundRect(ctx, fx - 52, fy + 8, 104, 18, 3);
   ctx.fill();
-  ctx.strokeStyle = '#E65100';
+  ctx.strokeStyle = '#4E342E';
   ctx.lineWidth = 1.5;
+  roundRect(ctx, fx - 52, fy + 8, 104, 18, 3);
   ctx.stroke();
 
-  // Hat
+  // Plank lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  ctx.lineWidth = 1;
+  for (let px = fx - 32; px < fx + 45; px += 22) {
+    ctx.beginPath();
+    ctx.moveTo(px, fy + 10);
+    ctx.lineTo(px, fy + 24);
+    ctx.stroke();
+  }
+  // Dock top-edge highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(fx - 50, fy + 9);
+  ctx.lineTo(fx + 50, fy + 9);
+  ctx.stroke();
+
+  // Legs (sitting, dangling)
   ctx.fillStyle = '#1565C0';
   ctx.beginPath();
-  ctx.ellipse(fx, fy - 56, 16, 8, 0, 0, Math.PI * 2);
+  ctx.moveTo(fx - 11, fy + 2);
+  ctx.lineTo(fx - 15, fy + 20);
+  ctx.lineTo(fx - 5, fy + 20);
+  ctx.lineTo(fx - 3, fy + 2);
+  ctx.closePath();
   ctx.fill();
-  ctx.fillRect(fx - 10, fy - 68, 20, 14);
-
-  // Rod
-  ctx.strokeStyle = '#795548';
-  ctx.lineWidth = 3;
+  ctx.fillStyle = '#1565C0';
   ctx.beginPath();
-  ctx.moveTo(fx + 10, fy - 20);
+  ctx.moveTo(fx + 3, fy + 2);
+  ctx.lineTo(fx + 5, fy + 20);
+  ctx.lineTo(fx + 15, fy + 20);
+  ctx.lineTo(fx + 11, fy + 2);
+  ctx.closePath();
+  ctx.fill();
+  // Shoes
+  ctx.fillStyle = '#4E342E';
+  ctx.beginPath();
+  ctx.ellipse(fx - 11, fy + 21, 7, 4, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(fx + 11, fy + 21, 7, 4, -0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.beginPath();
+  ctx.ellipse(fx, fy + 6, 18, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Torso
+  const bodyG = ctx.createRadialGradient(fx - 4, fy - 18, 3, fx, fy - 10, 26);
+  bodyG.addColorStop(0, '#FF8A65');
+  bodyG.addColorStop(0.5, '#FF7043');
+  bodyG.addColorStop(1, '#E64A19');
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.ellipse(fx, fy - 12, 15, 20, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#BF360C';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Vest center line
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy - 28);
+  ctx.lineTo(fx, fy + 4);
+  ctx.stroke();
+  // Vest highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.beginPath();
+  ctx.ellipse(fx - 5, fy - 20, 7, 12, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Arm (reaching toward rod grip)
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#FF7043';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(fx + 11, fy - 18);
+  ctx.quadraticCurveTo(fx + 20, fy - 28, fx + 14, fy - 30);
+  ctx.stroke();
+  ctx.strokeStyle = '#BF360C';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(fx + 11, fy - 18);
+  ctx.quadraticCurveTo(fx + 20, fy - 28, fx + 14, fy - 30);
+  ctx.stroke();
+  // Hand
+  ctx.fillStyle = '#FFCC80';
+  ctx.beginPath();
+  ctx.arc(fx + 14, fy - 30, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#DFA050';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // Neck
+  ctx.fillStyle = '#FFCC80';
+  ctx.fillRect(fx - 4, fy - 37, 8, 6);
+
+  // Head
+  const headG = ctx.createRadialGradient(fx - 3, fy - 47, 2, fx, fy - 45, 14);
+  headG.addColorStop(0, '#FFE0B2');
+  headG.addColorStop(0.6, '#FFCC80');
+  headG.addColorStop(1, '#FFB74D');
+  ctx.fillStyle = headG;
+  ctx.beginPath();
+  ctx.arc(fx, fy - 45, 13, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#DFA050';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // Cheek
+  ctx.fillStyle = 'rgba(255,138,101,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(fx + 7, fy - 42, 4, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eye
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(fx - 4, fy - 47, 3, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a1f1f';
+  ctx.beginPath();
+  ctx.arc(fx - 3.5, fy - 47, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(fx - 4.5, fy - 48, 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  // Smile
+  ctx.strokeStyle = '#C67040';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(fx - 1, fy - 43, 5, 0.1, Math.PI * 0.65);
+  ctx.stroke();
+
+  // Hat brim
+  const brimG = ctx.createLinearGradient(fx - 18, 0, fx + 18, 0);
+  brimG.addColorStop(0, '#0D47A1');
+  brimG.addColorStop(0.5, '#1976D2');
+  brimG.addColorStop(1, '#0D47A1');
+  ctx.fillStyle = brimG;
+  ctx.beginPath();
+  ctx.ellipse(fx, fy - 55, 18, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#0A3670';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Hat crown
+  const crownG = ctx.createLinearGradient(fx - 12, fy - 70, fx + 12, fy - 56);
+  crownG.addColorStop(0, '#1E88E5');
+  crownG.addColorStop(0.4, '#1976D2');
+  crownG.addColorStop(1, '#1565C0');
+  ctx.fillStyle = crownG;
+  ctx.beginPath();
+  ctx.moveTo(fx - 11, fy - 56);
+  ctx.quadraticCurveTo(fx - 12, fy - 70, fx, fy - 69);
+  ctx.quadraticCurveTo(fx + 12, fy - 70, fx + 11, fy - 56);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#0A3670';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Hat band
+  ctx.fillStyle = '#FF8F00';
+  ctx.fillRect(fx - 11, fy - 58, 22, 3);
+  // Hat highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.13)';
+  ctx.beginPath();
+  ctx.ellipse(fx - 3, fy - 64, 5, 3, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rod shadow
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(fx + 14, fy - 29);
+  ctx.quadraticCurveTo(fx + 38, fy - 52, fx + 60, fy - 70);
+  ctx.stroke();
+  // Rod body (tapered)
+  const rodG = ctx.createLinearGradient(fx + 14, fy - 30, fx + 60, fy - 70);
+  rodG.addColorStop(0, '#8D6E63');
+  rodG.addColorStop(0.3, '#A1887F');
+  rodG.addColorStop(0.7, '#795548');
+  rodG.addColorStop(1, '#6D4C41');
+  ctx.strokeStyle = rodG;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(fx + 14, fy - 30);
+  ctx.quadraticCurveTo(fx + 36, fy - 51, fx + 48, fy - 62);
+  ctx.stroke();
+  ctx.strokeStyle = '#6D4C41';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(fx + 48, fy - 62);
   ctx.lineTo(fx + 60, fy - 70);
   ctx.stroke();
+  // Rod highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(fx + 16, fy - 31);
+  ctx.quadraticCurveTo(fx + 37, fy - 52, fx + 49, fy - 63);
+  ctx.stroke();
+  // Guide rings
+  ctx.fillStyle = '#B0BEC5';
+  for (const t of [0.3, 0.6, 0.85]) {
+    const gx = fx + 14 + 46 * t;
+    const gy = fy - 30 - 40 * t;
+    ctx.beginPath();
+    ctx.arc(gx, gy, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Rod tip ring
+  ctx.fillStyle = '#CFD8DC';
+  ctx.beginPath();
+  ctx.arc(fx + 60, fy - 70, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#90A4AE';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  // Reel
+  ctx.fillStyle = '#78909C';
+  roundRect(ctx, fx + 11, fy - 28, 8, 6, 2);
+  ctx.fill();
+  ctx.fillStyle = '#B0BEC5';
+  ctx.beginPath();
+  ctx.arc(fx + 15, fy - 25, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.lineCap = 'butt';
 }
 
 function drawFishInWater() {
@@ -899,46 +1132,122 @@ function drawFishInWater() {
 function drawFish(x, y, f) {
   const bob = Math.sin(Date.now() * 0.003 + f.bobOffset) * 3;
   const sy = y + bob;
+  const s = f.size;
+  const t = Date.now() * 0.006;
+  const tailWag = Math.sin(t + f.bobOffset) * 0.3;
 
   ctx.save();
   ctx.translate(x, sy);
   if (f.direction < 0) ctx.scale(-1, 1);
 
+  // Rarity glow
+  if (f.type === 'legendary' || f.type === 'amazing') {
+    const pulse = f.type === 'legendary' ? 0.18 + Math.sin(t * 0.5) * 0.07 : 0.1;
+    ctx.globalAlpha = pulse;
+    const glowG = ctx.createRadialGradient(0, 0, s * 0.3, 0, 0, s * 1.8);
+    glowG.addColorStop(0, f.color);
+    glowG.addColorStop(1, 'transparent');
+    ctx.fillStyle = glowG;
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
   // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
   ctx.beginPath();
-  ctx.ellipse(2, 3, f.size, f.size * 0.55, 0, 0, Math.PI * 2);
+  ctx.ellipse(2, 4, s * 1.05, s * 0.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body
-  const grad = ctx.createRadialGradient(-3, -2, 2, 0, 0, f.size);
-  grad.addColorStop(0, f.color);
-  grad.addColorStop(1, f.accentColor);
-  ctx.fillStyle = grad;
+  // Tail (animated wag, forked shape)
+  ctx.save();
+  ctx.translate(-s + 2, 0);
+  ctx.rotate(tailWag);
+  ctx.fillStyle = f.accentColor;
   ctx.beginPath();
-  ctx.ellipse(0, 0, f.size, f.size * 0.55, 0, 0, Math.PI * 2);
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(-s * 0.35, -s * 0.45, -s * 0.55, -s * 0.4);
+  ctx.quadraticCurveTo(-s * 0.3, 0, -s * 0.55, s * 0.4);
+  ctx.quadraticCurveTo(-s * 0.35, s * 0.45, 0, 0);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.beginPath();
+  ctx.moveTo(-1, -1);
+  ctx.quadraticCurveTo(-s * 0.25, -s * 0.3, -s * 0.4, -s * 0.25);
+  ctx.quadraticCurveTo(-s * 0.2, -s * 0.08, -1, -1);
+  ctx.fill();
+  ctx.restore();
+
+  // Dorsal fin
+  ctx.fillStyle = f.accentColor;
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.15, -s * 0.45);
+  ctx.quadraticCurveTo(s * 0.05, -s * 0.85, s * 0.25, -s * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.08, -s * 0.48);
+  ctx.quadraticCurveTo(s * 0.03, -s * 0.7, s * 0.14, -s * 0.48);
+  ctx.closePath();
+  ctx.fill();
+
+  // Pectoral fin
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = f.accentColor;
+  ctx.beginPath();
+  ctx.moveTo(s * 0.05, s * 0.25);
+  ctx.quadraticCurveTo(s * 0.15, s * 0.6, -s * 0.1, s * 0.5);
+  ctx.quadraticCurveTo(-s * 0.05, s * 0.35, s * 0.05, s * 0.25);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Body
+  const bodyG = ctx.createRadialGradient(-s * 0.15, -s * 0.15, s * 0.1, 0, 0, s);
+  bodyG.addColorStop(0, f.color);
+  bodyG.addColorStop(0.75, f.accentColor);
+  bodyG.addColorStop(1, f.accentColor);
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s, s * 0.55, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = f.accentColor;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Tail
-  ctx.fillStyle = f.accentColor;
+  // Belly highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.13)';
   ctx.beginPath();
-  ctx.moveTo(-f.size + 2, 0);
-  ctx.lineTo(-f.size - 8, -6);
-  ctx.lineTo(-f.size - 8, 6);
-  ctx.closePath();
+  ctx.ellipse(-s * 0.08, s * 0.15, s * 0.55, s * 0.18, 0.1, 0, Math.PI * 2);
   ctx.fill();
+
+  // Mouth
+  ctx.strokeStyle = f.accentColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(s * 0.72, s * 0.05, s * 0.14, 0.4, Math.PI * 0.75);
+  ctx.stroke();
 
   // Eye
   ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowBlur = 2;
   ctx.beginPath();
-  ctx.arc(f.size * 0.4, -2, 3, 0, Math.PI * 2);
+  ctx.ellipse(s * 0.4, -s * 0.1, s * 0.17, s * 0.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = f.type === 'legendary' ? '#CE93D8' : f.type === 'amazing' ? '#FFD54F' : '#1a1a1a';
+  ctx.beginPath();
+  ctx.arc(s * 0.43, -s * 0.1, s * 0.12, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#000';
   ctx.beginPath();
-  ctx.arc(f.size * 0.45, -2, 1.5, 0, Math.PI * 2);
+  ctx.arc(s * 0.44, -s * 0.1, s * 0.07, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(s * 0.39, -s * 0.15, s * 0.045, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
@@ -947,34 +1256,129 @@ function drawFish(x, y, f) {
 function drawHookAndLine() {
   const hookScreenY = hook.y - camera.y;
 
-  // Line
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  // Rod tip in world coords, then to screen
+  const rodTipX = W / 2 + 60;
+  const rodTipY = (CONFIG.surfaceY - 30) - 70;
+  const rodTipScreenY = rodTipY - camera.y;
+
+  // Anchor line to rod tip when visible, otherwise top of screen
+  const lineStartX = rodTipScreenY > -20 ? rodTipX : hook.x;
+  const lineStartY = Math.max(0, rodTipScreenY);
+
+  // Line — slight catenary curve, depth-faded
+  const lineDist = hookScreenY - lineStartY;
+  const sag = Math.min(lineDist * 0.04, 18);
+  const midX = (lineStartX + hook.x) / 2 + sag;
+  const midY = (lineStartY + hookScreenY) / 2;
+
+  const lineG = ctx.createLinearGradient(0, lineStartY, 0, hookScreenY);
+  lineG.addColorStop(0, 'rgba(220,235,245,0.55)');
+  lineG.addColorStop(0.5, 'rgba(200,225,240,0.4)');
+  lineG.addColorStop(1, 'rgba(180,215,235,0.25)');
+  ctx.strokeStyle = lineG;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(lineStartX, lineStartY);
+  ctx.quadraticCurveTo(midX, midY, hook.x, hookScreenY);
+  ctx.stroke();
+
+  // Underwater glow around hook
+  const depthProgress = Math.min(1, camera.y / (getMaxDepth() * CONFIG.metersToPixels));
+  const glowAlpha = 0.06 + depthProgress * 0.1;
+  const glowR = 25 + depthProgress * 15;
+  const hookGlow = ctx.createRadialGradient(hook.x, hookScreenY + 6, 2, hook.x, hookScreenY + 6, glowR);
+  hookGlow.addColorStop(0, `rgba(180,220,255,${glowAlpha})`);
+  hookGlow.addColorStop(1, 'transparent');
+  ctx.fillStyle = hookGlow;
+  ctx.beginPath();
+  ctx.arc(hook.x, hookScreenY + 6, glowR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hook — J-shape with metallic look
+  const hx = hook.x;
+  const hy = hookScreenY;
+
+  // Shank (straight top section)
+  const shankG = ctx.createLinearGradient(hx - 3, 0, hx + 3, 0);
+  shankG.addColorStop(0, '#90A4AE');
+  shankG.addColorStop(0.4, '#ECEFF1');
+  shankG.addColorStop(0.6, '#CFD8DC');
+  shankG.addColorStop(1, '#78909C');
+  ctx.strokeStyle = shankG;
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(hx, hy);
+  ctx.lineTo(hx, hy + 10);
+  ctx.stroke();
+
+  // Bend (curved bottom)
+  const bendG = ctx.createLinearGradient(hx - 10, hy + 10, hx + 2, hy + 18);
+  bendG.addColorStop(0, '#78909C');
+  bendG.addColorStop(0.4, '#ECEFF1');
+  bendG.addColorStop(1, '#90A4AE');
+  ctx.strokeStyle = bendG;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(hx - 5, hy + 10, 5, -Math.PI * 0.5, Math.PI * 0.85, false);
+  ctx.stroke();
+
+  // Point (upward barb)
+  ctx.strokeStyle = '#B0BEC5';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(hx - 9.3, hy + 13);
+  ctx.lineTo(hx - 9, hy + 6);
+  ctx.stroke();
+
+  // Barb tick
+  ctx.strokeStyle = '#CFD8DC';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.moveTo(hook.x, 0);
-  ctx.lineTo(hook.x, hookScreenY);
+  ctx.moveTo(hx - 9, hy + 8);
+  ctx.lineTo(hx - 11.5, hy + 10);
   ctx.stroke();
 
-  // Hook
-  ctx.strokeStyle = '#B0BEC5';
-  ctx.lineWidth = 3;
+  // Eye ring at top of shank
+  ctx.strokeStyle = '#90A4AE';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(hook.x, hookScreenY + 8, 8, 0, Math.PI, false);
+  ctx.arc(hx, hy - 1, 2.5, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Hook point
-  ctx.fillStyle = '#CFD8DC';
+  // Specular highlight on bend
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(hook.x - 8, hookScreenY + 8, 3, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(hx - 5, hy + 10, 4, -Math.PI * 0.3, Math.PI * 0.4, false);
+  ctx.stroke();
+
+  ctx.lineCap = 'butt';
 }
 
 function drawCaughtFishOnHook() {
   const hookScreenY = hook.y - camera.y;
-  for (let i = 0; i < state.caughtFish.length; i++) {
+  const count = state.caughtFish.length;
+  if (count === 0) return;
+
+  const t = Date.now() * 0.002;
+
+  // Short connecting lines from hook bend to each fish
+  for (let i = 0; i < count; i++) {
     const f = state.caughtFish[i];
-    const offY = hookScreenY + 20 + i * 18;
-    const offX = hook.x + Math.sin(i * 1.2) * 8;
+    const angle = (i - (count - 1) / 2) * 0.35;
+    const sway = Math.sin(t + i * 1.7) * 4;
+    const hangDist = 20 + i * 14;
+    const offX = hook.x + Math.sin(angle) * hangDist * 0.5 + sway;
+    const offY = hookScreenY + 16 + Math.cos(angle) * hangDist;
+
+    ctx.strokeStyle = 'rgba(200,225,240,0.25)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(hook.x, hookScreenY + 14);
+    ctx.lineTo(offX, offY - f.size * 0.3);
+    ctx.stroke();
+
     drawFish(offX, offY, f);
   }
 }
